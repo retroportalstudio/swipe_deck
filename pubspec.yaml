@@ -1,6 +1,6 @@
 name: swipe_deck
 description: A simple Flutter Package to Mimic iMessage Image Picker for Flutter
-version: 1.0.0
+version: 1.1.0
 homepage: https://github.com/retroportalstudio/swipe_deck.git
 
 environment:

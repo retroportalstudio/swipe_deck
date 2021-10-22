@@ -3,6 +3,7 @@ library swipe_deck;
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:swipe_deck/constants.dart';
 import 'package:swipe_deck/data_holder.dart';
 import 'package:provider/provider.dart';
 
@@ -10,31 +11,40 @@ class SwipeDeck extends StatefulWidget {
   final List<Widget> widgets;
   final int startIndex;
   final Widget emptyIndicator;
-  final double aspectRatio;
+  final double aspectRatio, cardSpreadInDegrees;
+  final Function(int)? onChange;
+  final Function? onSwipeRight, onSwipeLeft;
 
-  const SwipeDeck({Key? key, required this.widgets, this.startIndex = 0, this.emptyIndicator = const _NothingHere(), this.aspectRatio = 4 / 3}) : super(key: key);
+  const SwipeDeck(
+      {Key? key,
+      required this.widgets,
+      this.startIndex = 0,
+      this.emptyIndicator = const _NothingHere(),
+      this.aspectRatio = 4 / 3,
+      this.onChange,
+      this.cardSpreadInDegrees = 5.0,
+      this.onSwipeRight,
+      this.onSwipeLeft})
+      : super(key: key);
 
   @override
   _SwipeDeckState createState() => _SwipeDeckState();
 }
 
 class _SwipeDeckState extends State<SwipeDeck> {
+  final borderRadius = BorderRadius.circular(20.0);
   List<Widget> leftStackRaw = [], rightStackRaw = [];
   List<MapEntry<int, dynamic>> leftStack = [], rightStack = [];
   Widget? currentWidget, contestantImage, removedImage;
   bool draggingLeft = false, onHold = false, beginDrag = false;
-  double transformLevel = 0, removeTransformLevel = 0;
+  double transformLevel = 0, removeTransformLevel = 0, spreadInRadians = DEFAULT_SPREAD;
   Timer? stackTimer, repositionTimer;
 
   @override
   void dispose() {
     super.dispose();
-    if (stackTimer != null) {
-      stackTimer!.cancel();
-    }
-    if (repositionTimer != null) {
-      repositionTimer!.cancel();
-    }
+    stackTimer?.cancel();
+    repositionTimer?.cancel();
   }
 
   @override
@@ -43,6 +53,8 @@ class _SwipeDeckState extends State<SwipeDeck> {
     if (widget.widgets.isEmpty) {
       return;
     }
+
+    spreadInRadians = widget.cardSpreadInDegrees.clamp(2.0, 10.0) * (PI / 180);
 
     leftStackRaw = widget.widgets.sublist(widget.startIndex);
     rightStackRaw = widget.widgets.sublist(0, widget.startIndex);
@@ -94,7 +106,7 @@ class _SwipeDeckState extends State<SwipeDeck> {
       setState(() {});
     });
     Future.delayed(Duration(milliseconds: 200), () {
-      repositionTimer!.cancel();
+      repositionTimer?.cancel();
       transformLevel = max(transformLevel, 0);
       setState(() {
         onHold = false;
@@ -110,12 +122,17 @@ class _SwipeDeckState extends State<SwipeDeck> {
     );
   }
 
+  postOnChange(index) {
+    if (widget.onChange != null) {
+      widget.onChange!(index);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(20.0);
     bool dragLimit = transformLevel > 0.8;
     return ChangeNotifierProvider(
-      create: (BuildContext context) => TransformData(),
+      create: (BuildContext context) => TransformData(spreadRadians: spreadInRadians),
       child: LayoutBuilder(builder: (context, constraints) {
         final imageWidth = constraints.maxWidth / 2;
         final imageHeight = widget.aspectRatio * imageWidth;
@@ -158,6 +175,7 @@ class _SwipeDeckState extends State<SwipeDeck> {
               }
               contestantImage = leftStack.first.value;
             }
+            bool changed = false;
             if (transformLevel > 0.8) {
               removedImage = currentWidget;
               if (draggingLeft) {
@@ -167,6 +185,8 @@ class _SwipeDeckState extends State<SwipeDeck> {
                 leftStackRaw.insert(0, currentWidget!);
                 currentWidget = rightStackRaw.last;
                 rightStackRaw.removeLast();
+
+                changed = true;
                 if (rightStackRaw.isNotEmpty) {
                   contestantImage = rightStackRaw.last;
                 }
@@ -177,9 +197,15 @@ class _SwipeDeckState extends State<SwipeDeck> {
                 rightStackRaw.add(currentWidget!);
                 currentWidget = leftStackRaw.first;
                 leftStackRaw.removeAt(0);
+
+                changed = true;
                 if (leftStackRaw.isNotEmpty) {
                   contestantImage = leftStackRaw.first;
                 }
+              }
+              if (changed) {
+                draggingLeft ? widget.onSwipeLeft?.call() : widget.onSwipeRight?.call();
+                postOnChange(rightStackRaw.length);
               }
               refreshLHStacks();
             }
@@ -247,8 +273,6 @@ class _SwipeDeckState extends State<SwipeDeck> {
   }
 }
 
-const _ROTATION_DIFF = 0.0872665;
-
 class _WidgetHolder extends StatefulWidget {
   final double width, height;
   final Widget image;
@@ -272,17 +296,12 @@ class _WidgetHolderState extends State<_WidgetHolder> {
   }
 
   @override
-  void didUpdateWidget(covariant _WidgetHolder oldWidget) {
-    if (oldWidget.image != widget.image) {
-      super.didUpdateWidget(oldWidget);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    double finalRotation = (widget.index <= widget.lastIndex - 3) ? (3 * _ROTATION_DIFF) : ((widget.lastIndex - widget.index) * _ROTATION_DIFF);
-    bool isLeft = context.read<TransformData>().isLeftDrag;
-    double scaleDifferential = 0.05 * context.read<TransformData>().transformDelta;
+    TransformData transformData = context.watch<TransformData>();
+    double spread = transformData.spreadRadians;
+    double finalRotation = (widget.index <= widget.lastIndex - 3) ? (3 * spread) : ((widget.lastIndex - widget.index) * spread);
+    bool isLeft = transformData.isLeftDrag;
+    double scaleDifferential = 0.05 * transformData.transformDelta;
     return Transform.scale(
       scale: isLeft ? (widget.isLeft ? (1 - scaleDifferential) : 1 + scaleDifferential) : (widget.isLeft ? 1 + scaleDifferential : (1 - scaleDifferential)),
       child: Transform(alignment: Alignment.bottomCenter, transform: Matrix4.rotationZ(widget.isLeft ? -finalRotation : finalRotation), child: childImage),
@@ -302,7 +321,7 @@ class __NothingHereState extends State<_NothingHere> {
   Widget build(BuildContext context) {
     return Container(
       child: Center(
-        child: Text("Nothing Here!"),
+        child: const Text("Nothing Here!"),
       ),
     );
   }
